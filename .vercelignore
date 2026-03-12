@@ -1,0 +1,8 @@
+aidlc-docs/
+.amazonq/
+.kiro/
+.git/
+.vscode/
+img/
+*.md
+!dist/**
