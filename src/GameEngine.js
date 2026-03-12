@@ -1,6 +1,9 @@
 // GameEngine.js - Central orchestrator with game loop
 import { Player } from './Player.js';
 import { Wall } from './Wall.js';
+import { Coin } from './Coin.js';
+import { Plasma } from './Plasma.js';
+import { UFO } from './UFO.js';
 import { Renderer } from './Renderer.js';
 import { InputHandler } from './InputHandler.js';
 import { AudioManager } from './AudioManager.js';
@@ -16,7 +19,7 @@ export class GameEngine {
     // Game constants
     this.WALL_WIDTH = 60;
     this.WALL_SPACING = 250;
-    this.GAP_SIZE = 150;
+    this.GAP_SIZE = 180;
     this.WALL_SPEED = 2;
     this.MIN_GAP_Y = 50;
     this.MAX_GAP_Y = this.canvas.height - this.GAP_SIZE - 50;
@@ -41,6 +44,24 @@ export class GameEngine {
     this.walls = [];
     this.wallPool = [];
     this.maxPoolSize = 10;
+
+    // Coin management
+    this.coins = [];
+    this.coinPool = [];
+    this.COIN_SIZE = 20;
+    this.COIN_POINTS = 2;
+
+    // Plasma management
+    this.plasmaShots = [];
+    this.availablePlasmaShots = 0;
+    this.usedPlasmaShots = 0;
+    this.POINTS_PER_SHOT = 3;
+
+    // UFO management
+    this.ufos = [];
+    this.ufoSpawnChance = 0.005;
+    this.lastUFOSpawn = 0;
+    this.MIN_UFO_INTERVAL = 3000;
 
     // Timing
     this.lastTimestamp = 0;
@@ -73,6 +94,12 @@ export class GameEngine {
     // Reset game
     this.player.reset(this.PLAYER_START_X, this.PLAYER_START_Y);
     this.walls = [];
+    this.coins = [];
+    this.plasmaShots = [];
+    this.ufos = [];
+    this.availablePlasmaShots = 0;
+    this.usedPlasmaShots = 0;
+    this.lastUFOSpawn = 0;
     this.scoreManager.reset();
 
     // Spawn initial walls with proper spacing
@@ -81,6 +108,18 @@ export class GameEngine {
       const x = this.canvas.width + i * this.WALL_SPACING;
       const wall = this.getWallFromPool(x, gapY);
       this.walls.push(wall);
+
+      // Spawn coin between walls (easier to reach)
+      const coinInTop = Math.random() > 0.5;
+      const safeMargin = 80;
+      const coinY = coinInTop
+        ? Math.random() * (gapY - safeMargin * 2) + safeMargin
+        : gapY +
+          this.GAP_SIZE +
+          Math.random() *
+            (this.canvas.height - gapY - this.GAP_SIZE - safeMargin * 2) +
+          safeMargin;
+      this.spawnCoin(x + this.WALL_SPACING / 2, coinY);
     }
 
     // Start game
@@ -96,12 +135,17 @@ export class GameEngine {
     this.update(this.FIXED_TIMESTEP);
 
     // Render
+    const remainingShots = this.availablePlasmaShots - this.usedPlasmaShots;
     this.renderer.render(
       this.state,
       this.player,
       this.walls,
       this.scoreManager.getCurrentScore(),
       this.scoreManager.getHighScore(),
+      this.coins,
+      this.plasmaShots,
+      remainingShots,
+      this.ufos,
     );
 
     // Request next frame
@@ -115,14 +159,41 @@ export class GameEngine {
     // Update walls
     this.walls.forEach((wall) => wall.update(timestep, this.WALL_SPEED));
 
+    // Update coins
+    this.coins.forEach((coin) => coin.update(timestep, this.WALL_SPEED));
+
+    // Update plasma shots
+    this.plasmaShots.forEach((plasma) => plasma.update(timestep));
+
+    // Update UFOs
+    this.ufos.forEach((ufo) => ufo.update(timestep));
+
+    // Check plasma-wall collisions
+    this.checkPlasmaCollisions();
+
+    // Check plasma-UFO collisions
+    this.checkPlasmaUFOCollisions();
+
     // Check collisions
     if (this.checkCollisions()) {
       this.gameOver();
       return;
     }
 
+    // Check UFO collisions
+    if (this.checkUFOCollisions()) {
+      this.gameOver();
+      return;
+    }
+
+    // Check coin collection
+    this.checkCoinCollection();
+
     // Check score
     this.checkScore();
+
+    // Spawn UFO randomly
+    this.trySpawnUFO();
 
     // Spawn new walls
     if (this.walls.length > 0) {
@@ -132,8 +203,11 @@ export class GameEngine {
       }
     }
 
-    // Remove off-screen walls
+    // Remove off-screen entities
     this.removeOffScreenWalls();
+    this.removeOffScreenCoins();
+    this.removeOffScreenPlasma();
+    this.removeOffScreenUFOs();
   }
 
   checkCollisions() {
@@ -149,8 +223,10 @@ export class GameEngine {
       return true;
     }
 
-    // Check wall collisions
+    // Check wall collisions (skip destroyed walls)
     for (let wall of this.walls) {
+      if (wall.destroyed) continue;
+
       // Skip distant walls
       if (wall.x + wall.width < playerBounds.x - 50) continue;
       if (wall.x > playerBounds.x + playerBounds.width + 50) break;
@@ -182,6 +258,7 @@ export class GameEngine {
       if (!wall.passed && wall.isPassed(this.player.x, this.player.width)) {
         wall.passed = true;
         this.scoreManager.incrementScore();
+        this.updatePlasmaShots();
         break;
       }
     }
@@ -198,12 +275,17 @@ export class GameEngine {
     }
 
     // Render final frame
+    const remainingShots = this.availablePlasmaShots - this.usedPlasmaShots;
     this.renderer.render(
       this.state,
       this.player,
       this.walls,
       this.scoreManager.getCurrentScore(),
       this.scoreManager.getHighScore(),
+      this.coins,
+      this.plasmaShots,
+      remainingShots,
+      this.ufos,
     );
   }
 
@@ -255,6 +337,18 @@ export class GameEngine {
     const gapY = this.getRandomGapY();
     const wall = this.getWallFromPool(this.canvas.width, gapY);
     this.walls.push(wall);
+
+    // Spawn coin between walls (easier to reach)
+    const coinInTop = Math.random() > 0.5;
+    const safeMargin = 80;
+    const coinY = coinInTop
+      ? Math.random() * (gapY - safeMargin * 2) + safeMargin
+      : gapY +
+        this.GAP_SIZE +
+        Math.random() *
+          (this.canvas.height - gapY - this.GAP_SIZE - safeMargin * 2) +
+        safeMargin;
+    this.spawnCoin(this.canvas.width + this.WALL_SPACING / 2, coinY);
   }
 
   removeOffScreenWalls() {
@@ -269,5 +363,170 @@ export class GameEngine {
       Math.floor(Math.random() * (this.MAX_GAP_Y - this.MIN_GAP_Y + 1)) +
       this.MIN_GAP_Y
     );
+  }
+
+  // Coin management
+  getCoinFromPool(x, y) {
+    let coin;
+    if (this.coinPool.length > 0) {
+      coin = this.coinPool.pop();
+      coin.reset(x, y);
+    } else {
+      coin = new Coin(x, y, this.COIN_SIZE);
+    }
+    return coin;
+  }
+
+  returnCoinToPool(coin) {
+    if (this.coinPool.length < this.maxPoolSize) {
+      this.coinPool.push(coin);
+    }
+  }
+
+  spawnCoin(x, y) {
+    const coin = this.getCoinFromPool(x, y);
+    this.coins.push(coin);
+  }
+
+  removeOffScreenCoins() {
+    while (this.coins.length > 0 && this.coins[0].isOffScreen()) {
+      const coin = this.coins.shift();
+      this.returnCoinToPool(coin);
+    }
+  }
+
+  checkCoinCollection() {
+    const playerBounds = this.player.getBounds();
+
+    for (let i = this.coins.length - 1; i >= 0; i--) {
+      const coin = this.coins[i];
+      if (coin.collected) continue;
+
+      const coinBounds = coin.getBounds();
+
+      if (this.checkAABB(playerBounds, coinBounds)) {
+        coin.collected = true;
+        this.scoreManager.addPoints(this.COIN_POINTS);
+        this.coins.splice(i, 1);
+        this.returnCoinToPool(coin);
+        this.updatePlasmaShots();
+      }
+    }
+  }
+
+  updatePlasmaShots() {
+    this.availablePlasmaShots = Math.floor(
+      this.scoreManager.getCurrentScore() / this.POINTS_PER_SHOT,
+    );
+  }
+
+  shootPlasma() {
+    const remainingShots = this.availablePlasmaShots - this.usedPlasmaShots;
+    if (remainingShots <= 0) return;
+
+    const plasma = new Plasma(
+      this.player.x + this.player.width,
+      this.player.y + this.player.height / 2 - 5,
+    );
+    this.plasmaShots.push(plasma);
+    this.usedPlasmaShots++;
+  }
+
+  checkPlasmaCollisions() {
+    for (let i = this.plasmaShots.length - 1; i >= 0; i--) {
+      const plasma = this.plasmaShots[i];
+      if (!plasma.active) continue;
+
+      const plasmaBounds = plasma.getBounds();
+
+      for (let wall of this.walls) {
+        if (wall.destroyed) continue;
+
+        const wallBounds = wall.getBounds();
+
+        if (
+          this.checkAABB(plasmaBounds, wallBounds.top) ||
+          this.checkAABB(plasmaBounds, wallBounds.bottom)
+        ) {
+          wall.destroy();
+          plasma.deactivate();
+          this.plasmaShots.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
+
+  removeOffScreenPlasma() {
+    this.plasmaShots = this.plasmaShots.filter(
+      (plasma) => !plasma.isOffScreen(this.canvas.width),
+    );
+  }
+
+  trySpawnUFO() {
+    const now = performance.now();
+
+    // Check if there's any active UFO
+    const hasActiveUFO = this.ufos.some((ufo) => !ufo.destroyed);
+
+    // Only spawn if: has plasma shots, no active UFO, enough time passed, random chance
+    if (
+      this.availablePlasmaShots > 0 &&
+      !hasActiveUFO &&
+      now - this.lastUFOSpawn > this.MIN_UFO_INTERVAL &&
+      Math.random() < this.ufoSpawnChance
+    ) {
+      // Find the next wall to spawn UFO in its gap
+      if (this.walls.length > 0) {
+        const targetWall = this.walls[this.walls.length - 1];
+        const ufoY = targetWall.gapY + this.GAP_SIZE / 2;
+        const ufo = new UFO(this.canvas.width, ufoY);
+        this.ufos.push(ufo);
+        this.lastUFOSpawn = now;
+      }
+    }
+  }
+
+  checkUFOCollisions() {
+    const playerBounds = this.player.getBounds();
+
+    for (let ufo of this.ufos) {
+      if (ufo.destroyed) continue;
+
+      const ufoBounds = ufo.getBounds();
+
+      if (this.checkAABB(playerBounds, ufoBounds)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  checkPlasmaUFOCollisions() {
+    for (let i = this.plasmaShots.length - 1; i >= 0; i--) {
+      const plasma = this.plasmaShots[i];
+      if (!plasma.active) continue;
+
+      const plasmaBounds = plasma.getBounds();
+
+      for (let ufo of this.ufos) {
+        if (ufo.destroyed) continue;
+
+        const ufoBounds = ufo.getBounds();
+
+        if (this.checkAABB(plasmaBounds, ufoBounds)) {
+          ufo.destroy();
+          plasma.deactivate();
+          this.plasmaShots.splice(i, 1);
+          this.scoreManager.addPoints(10);
+          break;
+        }
+      }
+    }
+  }
+
+  removeOffScreenUFOs() {
+    this.ufos = this.ufos.filter((ufo) => !ufo.isOffScreen());
   }
 }

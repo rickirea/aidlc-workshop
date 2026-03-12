@@ -12,6 +12,10 @@ export class ScoreManager {
     this.currentScore++;
   }
 
+  addPoints(points) {
+    this.currentScore += points;
+  }
+
   getCurrentScore() {
     return this.currentScore;
   }

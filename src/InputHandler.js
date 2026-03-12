@@ -33,6 +33,16 @@ export class InputHandler {
         this.gameEngine.audioManager.playJump();
       } else if (state === 'START') {
         this.handlePlayClick();
+      } else if (state === 'GAME_OVER') {
+        this.handleRestartClick();
+      }
+    } else if (event.code === 'KeyX') {
+      event.preventDefault();
+
+      const state = this.gameEngine.getState();
+
+      if (state === 'PLAYING') {
+        this.gameEngine.shootPlasma();
       }
     }
   }

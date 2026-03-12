@@ -8,6 +8,7 @@ export class Wall {
     this.gapSize = gapSize;
     this.canvasHeight = canvasHeight;
     this.passed = false;
+    this.destroyed = false;
   }
 
   update(deltaTime, scrollSpeed) {
@@ -45,5 +46,10 @@ export class Wall {
     this.x = x;
     this.gapY = gapY;
     this.passed = false;
+    this.destroyed = false;
+  }
+
+  destroy() {
+    this.destroyed = true;
   }
 }
