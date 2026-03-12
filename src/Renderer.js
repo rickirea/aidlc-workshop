@@ -10,7 +10,7 @@ export class Renderer {
   async loadAssets() {
     try {
       this.sprite = new Image();
-      this.sprite.src = 'assets/ghosty.png';
+      this.sprite.src = '/assets/ghosty.png';
 
       await new Promise((resolve, reject) => {
         this.sprite.onload = resolve;

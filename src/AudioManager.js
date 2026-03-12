@@ -8,8 +8,8 @@ export class AudioManager {
 
   async loadAudio() {
     try {
-      this.jumpSound = new Audio('assets/jump.wav');
-      this.gameOverSound = new Audio('assets/game_over.wav');
+      this.jumpSound = new Audio('/assets/jump.wav');
+      this.gameOverSound = new Audio('/assets/game_over.wav');
 
       // Preload audio
       await Promise.all([this.jumpSound.load(), this.gameOverSound.load()]);
