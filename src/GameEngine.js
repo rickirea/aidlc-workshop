@@ -65,7 +65,10 @@ export class GameEngine {
 
     // Timing
     this.lastTimestamp = 0;
+    this.accumulator = 0;
     this.animationFrameId = null;
+    this.TARGET_FPS = 60;
+    this.FRAME_TIME = 1000 / this.TARGET_FPS;
   }
 
   async init() {
@@ -130,6 +133,17 @@ export class GameEngine {
 
   gameLoop(timestamp) {
     if (this.state !== 'PLAYING') return;
+
+    // Calculate delta time
+    const deltaTime = timestamp - this.lastTimestamp;
+
+    // Only update if enough time has passed (60 FPS cap)
+    if (deltaTime < this.FRAME_TIME) {
+      this.animationFrameId = requestAnimationFrame((ts) => this.gameLoop(ts));
+      return;
+    }
+
+    this.lastTimestamp = timestamp;
 
     // Fixed timestep update
     this.update(this.FIXED_TIMESTEP);
